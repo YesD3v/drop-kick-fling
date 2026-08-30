@@ -5,6 +5,7 @@ local utility = {
     AnimationClipProvider = game:GetService("AnimationClipProvider"),
     UserInputService = game:GetService("UserInputService"),
     TweenService = game:GetService("TweenService"),
+    Debris = game:GetService("Debris"),
     conns = {}
 }
 
@@ -24,20 +25,16 @@ utility.currentTrack = nil
 
 utility.AnimationCutTime = 0.3
 
-utility.shiftLockConnection = nil
-utility.shiftLockInputConnection = nil
-utility.oldAutoRotate = true
-utility.shiftLockYaw = 0
+utility.savedWalkSpeed = nil
+utility.savedAutoRotate = true
+
+utility.walkflinging = false
 
 function utility.CheckValidRigType(h)
     local s, r = pcall(function()
         return h.RigType == Enum.HumanoidRigType.R15
     end)
-
-    if s and r then
-        return true
-    end
-
+    if s and r then return true end
     return false
 end
 
@@ -116,277 +113,204 @@ function utility:ShowStartup()
 
     self.TweenService:Create(
         container,
-        TweenInfo.new(
-            0.3,
-            Enum.EasingStyle.Quint,
-            Enum.EasingDirection.Out
-        ),
-        {
-            BackgroundTransparency = 0.05
-        }
+        TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        { BackgroundTransparency = 0.05 }
     ):Play()
 
     self.TweenService:Create(
         stroke,
-        TweenInfo.new(
-            0.3,
-            Enum.EasingStyle.Quint,
-            Enum.EasingDirection.Out
-        ),
-        {
-            Transparency = 0.15
-        }
+        TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        { Transparency = 0.15 }
     ):Play()
 
     self.TweenService:Create(
         title,
-        TweenInfo.new(
-            0.3,
-            Enum.EasingStyle.Quint,
-            Enum.EasingDirection.Out
-        ),
-        {
-            TextTransparency = 0
-        }
+        TweenInfo.new(0.3, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        { TextTransparency = 0 }
     ):Play()
 
     self.TweenService:Create(
         credit,
-        TweenInfo.new(
-            0.35,
-            Enum.EasingStyle.Quint,
-            Enum.EasingDirection.Out
-        ),
-        {
-            TextTransparency = 0
-        }
+        TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out),
+        { TextTransparency = 0 }
     ):Play()
 
     task.wait(3.25)
 
-    local fadeInfo = TweenInfo.new(
-        0.45,
-        Enum.EasingStyle.Quint,
-        Enum.EasingDirection.In
-    )
+    local fadeInfo = TweenInfo.new(0.45, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
 
-    self.TweenService:Create(
-        overlay,
-        fadeInfo,
-        {
-            BackgroundTransparency = 1
-        }
-    ):Play()
-
-    self.TweenService:Create(
-        container,
-        fadeInfo,
-        {
-            BackgroundTransparency = 1,
-            Size = UDim2.fromOffset(165, 80)
-        }
-    ):Play()
-
-    self.TweenService:Create(
-        stroke,
-        fadeInfo,
-        {
-            Transparency = 1
-        }
-    ):Play()
-
-    self.TweenService:Create(
-        title,
-        fadeInfo,
-        {
-            TextTransparency = 1
-        }
-    ):Play()
-
-    self.TweenService:Create(
-        credit,
-        fadeInfo,
-        {
-            TextTransparency = 1
-        }
-    ):Play()
+    self.TweenService:Create(overlay, fadeInfo, { BackgroundTransparency = 1 }):Play()
+    self.TweenService:Create(container, fadeInfo, { BackgroundTransparency = 1, Size = UDim2.fromOffset(165, 80) }):Play()
+    self.TweenService:Create(stroke, fadeInfo, { Transparency = 1 }):Play()
+    self.TweenService:Create(title, fadeInfo, { TextTransparency = 1 }):Play()
+    self.TweenService:Create(credit, fadeInfo, { TextTransparency = 1 }):Play()
 
     task.wait(0.5)
-
     gui:Destroy()
 end
 
-function utility:StartInvisibleShiftLock(character, humanoid)
-    local root = character:FindFirstChild("HumanoidRootPart")
+function utility:StartWalkFling(character)
+    local root = character:WaitForChild("HumanoidRootPart")
+    local humanoid = character:WaitForChild("Humanoid")
 
-    if not root then
-        return
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+    humanoid.BreakJointsOnDeath = false
+
+    self.walkflinging = true
+
+    task.spawn(function()
+        while self.walkflinging and root and root.Parent do
+            self.RunService.Heartbeat:Wait()
+
+            local originalVel = root.Velocity
+
+            root.Velocity = originalVel * 999999 + Vector3.new(0, 999999, 0)
+
+            self.RunService.RenderStepped:Wait()
+            root.Velocity = originalVel
+
+            self.RunService.Stepped:Wait()
+            root.Velocity = originalVel + Vector3.new(0, 0.1, 0)
+        end
+    end)
+end
+
+function utility:StopWalkFling()
+    self.walkflinging = false
+    local character = self.LocalPlayer.Character
+    if character and character:FindFirstChild("Humanoid") then
+        character.Humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, true)
+        character.Humanoid.BreakJointsOnDeath = true
+    end
+end
+
+-- Original anti-fling: disables collisions for all other players every frame
+function utility:StartAntiFling()
+    if self.antiFlingConnection then
+        self.antiFlingConnection:Disconnect()
+        self.antiFlingConnection = nil
     end
 
-    local camera = workspace.CurrentCamera
+    self.antiFlingConnection =
+        self.RunService.Heartbeat:Connect(function()
+            local myCharacter = self.LocalPlayer.Character
+            if not myCharacter then return end
 
-    if not camera then
-        return
-    end
-
-    if not self.actionRunning then
-        self.oldAutoRotate = humanoid.AutoRotate
-    end
-
-    humanoid.AutoRotate = false
-
-    local _, currentYaw, _ = root.CFrame:ToOrientation()
-    self.shiftLockYaw = currentYaw
-
-    if self.shiftLockConnection then
-        return
-    end
-
-    if self.shiftLockInputConnection then
-        self.shiftLockInputConnection:Disconnect()
-        self.shiftLockInputConnection = nil
-    end
-
-    self.shiftLockInputConnection =
-        self.UserInputService.InputChanged:Connect(function(input)
-            if not self.actionRunning then
-                return
+            for _, player in pairs(self.Players:GetPlayers()) do
+                if player ~= self.LocalPlayer and player.Character then
+                    for _, part in pairs(player.Character:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
+                        end
+                    end
+                end
             end
-
-            if input.UserInputType ~= Enum.UserInputType.MouseMovement then
-                return
-            end
-        end)
-
-    self.shiftLockConnection =
-        self.RunService.RenderStepped:Connect(function()
-            if not self.actionRunning then
-                return
-            end
-
-            if not character.Parent or not root.Parent then
-                return
-            end
-
-            camera = workspace.CurrentCamera
-
-            if not camera then
-                return
-            end
-
-            local look = camera.CFrame.LookVector
-
-            local flatLook = Vector3.new(
-                look.X,
-                0,
-                look.Z
-            )
-
-            if flatLook.Magnitude < 0.001 then
-                return
-            end
-
-            flatLook = flatLook.Unit
-
-            local cameraYaw = math.atan2(
-                -flatLook.X,
-                -flatLook.Z
-            )
-
-            self.shiftLockYaw = cameraYaw
-
-            root.CFrame =
-                CFrame.new(root.Position)
-                * CFrame.Angles(0, self.shiftLockYaw, 0)
         end)
 end
 
-function utility:StopInvisibleShiftLock(humanoid)
-    if self.shiftLockConnection then
-        self.shiftLockConnection:Disconnect()
-        self.shiftLockConnection = nil
-    end
+-- Updated fling: more forward, less upward
+function utility:FlingNearbyPlayers(userRoot, radius)
+    local camera = workspace.CurrentCamera
+    if not camera then return end
 
-    if self.shiftLockInputConnection then
-        self.shiftLockInputConnection:Disconnect()
-        self.shiftLockInputConnection = nil
-    end
+    local userLook = camera.CFrame.LookVector
+    userLook = Vector3.new(userLook.X, 0, userLook.Z).Unit
 
-    if humanoid and humanoid.Parent then
-        humanoid.AutoRotate = self.oldAutoRotate
+    local flingDir = (userLook * 3 + Vector3.new(0, 0.4, 0)).Unit
+
+    local force = 600
+    local upForce = 50
+
+    for _, player in ipairs(self.Players:GetPlayers()) do
+        if player ~= self.LocalPlayer and player.Character then
+            local targetChar = player.Character
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            local targetHum = targetChar:FindFirstChild("Humanoid")
+            if targetRoot and targetHum and targetHum.Health > 0 then
+                local distance = (targetRoot.Position - userRoot.Position).Magnitude
+                if distance <= radius then
+                    pcall(function()
+                        targetHum:ChangeState(Enum.HumanoidStateType.Physics)
+                        targetHum.PlatformStand = true
+
+                        for _ = 1, 5 do
+                            targetRoot:RequestNetworkOwnership()
+                            task.wait(0.01)
+                        end
+
+                        local finalVel = flingDir * force + Vector3.new(0, upForce, 0)
+
+                        for _, part in ipairs(targetChar:GetDescendants()) do
+                            if part:IsA("BasePart") and part.AssemblyLinearVelocity then
+                                part.AssemblyLinearVelocity = finalVel
+                            end
+                        end
+
+                        local bv = Instance.new("BodyVelocity")
+                        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+                        bv.Velocity = finalVel
+                        bv.Parent = targetRoot
+                        self.Debris:AddItem(bv, 0.5)
+
+                        targetRoot.AssemblyAngularVelocity = Vector3.new(
+                            math.random(-20, 20),
+                            math.random(-20, 20),
+                            math.random(-20, 20)
+                        )
+                    end)
+                end
+            end
+        end
     end
 end
 
 function utility:PerformDropkick()
-    if self.keyListening or self.recordingKey then
-        return
-    end
-
-    if self.selectedMethod == "None" then
-        return
-    end
+    if self.keyListening or self.recordingKey then return end
+    if self.selectedMethod == "None" then return end
 
     local character = self.LocalPlayer.Character
-
-    if not character then
-        return
-    end
-
+    if not character then return end
     local humanoid = character:FindFirstChild("Humanoid")
-
-    if not humanoid then
-        return
-    end
-
+    if not humanoid then return end
     local animator = humanoid:FindFirstChild("Animator")
-
-    if not animator then
-        return
-    end
-
+    if not animator then return end
     local leg = character:FindFirstChild("LeftLowerLeg")
-
-    if not leg then
-        return
-    end
+    if not leg then return end
 
     self.actionId += 1
-
     local thisActionId = self.actionId
 
     if self.currentTrack then
         pcall(function()
             self.currentTrack:Stop(0)
-        end)
-
-        pcall(function()
             self.currentTrack:Destroy()
         end)
-
         self.currentTrack = nil
     end
-
     self.actionRunning = true
 
-    self:StartInvisibleShiftLock(
-        character,
-        humanoid
-    )
+    local originalWalkSpeed = humanoid.WalkSpeed
+    local originalAutoRotate = humanoid.AutoRotate
+    local originalHipHeight = humanoid.HipHeight
+
+    self.savedWalkSpeed = originalWalkSpeed
+    self.savedAutoRotate = originalAutoRotate
+
+    humanoid.AutoRotate = true
+    humanoid.WalkSpeed = originalWalkSpeed
 
     local track
-
     local success = pcall(function()
-        track = animator:LoadAnimation(
-            self.dropkick
-        )
+        track = animator:LoadAnimation(self.dropkick)
     end)
 
     if not success or not track then
         if self.actionId == thisActionId then
+            humanoid.WalkSpeed = originalWalkSpeed
+            humanoid.AutoRotate = originalAutoRotate
+            humanoid.HipHeight = originalHipHeight
             self.actionRunning = false
-            self:StopInvisibleShiftLock(humanoid)
         end
-
         return
     end
 
@@ -395,14 +319,14 @@ function utility:PerformDropkick()
             track:Stop(0)
             track:Destroy()
         end)
-
         return
     end
 
     self.currentTrack = track
-
     track.Priority = Enum.AnimationPriority.Action
     track:Play(0)
+
+    self:StartWalkFling(character)
 
     task.wait()
 
@@ -411,104 +335,103 @@ function utility:PerformDropkick()
             track:Stop(0)
             track:Destroy()
         end)
-
+        self:StopWalkFling()
         return
     end
 
     local animationLength = track.Length
-
-    if animationLength <= 0 then
-        animationLength = 1
-    end
-
-    local playTime = math.max(
-        0.05,
-        animationLength - self.AnimationCutTime
-    )
-
+    if animationLength <= 0 then animationLength = 1 end
+    local playTime = math.max(0.05, animationLength - self.AnimationCutTime)
     local startTime = os.clock()
 
-    while track.IsPlaying
-        and (os.clock() - startTime) < playTime do
-
+    while track.IsPlaying and (os.clock() - startTime) < playTime do
         if self.actionId ~= thisActionId then
             if leg and leg.Parent then
-                leg.Velocity = Vector3.zero
+                leg.AssemblyLinearVelocity = Vector3.zero
+                leg.AssemblyAngularVelocity = Vector3.zero
             end
-
             pcall(function()
                 track:Stop(0)
                 track:Destroy()
             end)
-
+            self:StopWalkFling()
             return
         end
 
-        if not character.Parent then
-            break
+        if not character.Parent then break end
+
+        if humanoid and humanoid.Parent then
+            humanoid.WalkSpeed = originalWalkSpeed
+            humanoid.AutoRotate = true
         end
 
         self.RunService.Heartbeat:Wait()
 
         if self.actionId ~= thisActionId then
             if leg and leg.Parent then
-                leg.Velocity = Vector3.zero
+                leg.AssemblyLinearVelocity = Vector3.zero
+                leg.AssemblyAngularVelocity = Vector3.zero
             end
-
+            self:StopWalkFling()
             return
         end
 
         leg = character:FindFirstChild("LeftLowerLeg")
+        if not leg then break end
 
-        if not leg then
-            break
+        if humanoid and humanoid.Parent then
+            humanoid.HipHeight = 2.5008
         end
 
-        humanoid.HipHeight = 2.5008
+        local moveDirection = humanoid.MoveDirection
+        local currentY = leg.AssemblyLinearVelocity.Y
 
-        local velocity = leg.Velocity
-        local movel = 0.1
+        if moveDirection.Magnitude > 0.001 then
+            local desiredHorizontal = moveDirection.Unit * originalWalkSpeed
+            leg.AssemblyLinearVelocity = Vector3.new(desiredHorizontal.X, currentY, desiredHorizontal.Z)
+        else
+            leg.AssemblyLinearVelocity = Vector3.new(0, currentY, 0)
+        end
+        leg.AssemblyAngularVelocity = Vector3.zero
 
-        leg.Velocity =
-            velocity * 1000000
-            + Vector3.new(
-                0,
-                1000000,
-                0
-            )
+        self:FlingNearbyPlayers(character.HumanoidRootPart, 10)
 
         self.RunService.RenderStepped:Wait()
 
         if self.actionId ~= thisActionId then
             if leg and leg.Parent then
-                leg.Velocity = Vector3.zero
+                leg.AssemblyLinearVelocity = Vector3.zero
+                leg.AssemblyAngularVelocity = Vector3.zero
             end
-
+            self:StopWalkFling()
             return
         end
 
         if leg and leg.Parent then
-            leg.Velocity = velocity
+            local direction = humanoid.MoveDirection
+            if direction.Magnitude > 0.001 then
+                local desiredHorizontal = direction.Unit * originalWalkSpeed
+                leg.AssemblyLinearVelocity = Vector3.new(desiredHorizontal.X, leg.AssemblyLinearVelocity.Y, desiredHorizontal.Z)
+            else
+                leg.AssemblyLinearVelocity = Vector3.new(0, leg.AssemblyLinearVelocity.Y, 0)
+            end
+            leg.AssemblyAngularVelocity = Vector3.zero
         end
 
         self.RunService.Stepped:Wait()
 
         if self.actionId ~= thisActionId then
             if leg and leg.Parent then
-                leg.Velocity = Vector3.zero
+                leg.AssemblyLinearVelocity = Vector3.zero
+                leg.AssemblyAngularVelocity = Vector3.zero
             end
-
+            self:StopWalkFling()
             return
         end
 
-        if leg and leg.Parent then
-            leg.Velocity =
-                velocity
-                + Vector3.new(
-                    0,
-                    movel,
-                    0
-                )
+        if humanoid and humanoid.Parent then
+            humanoid.WalkSpeed = originalWalkSpeed
+            humanoid.AutoRotate = true
         end
     end
 
@@ -517,107 +440,63 @@ function utility:PerformDropkick()
             track:Stop(0)
             track:Destroy()
         end)
-
+        self:StopWalkFling()
         return
     end
 
-    if track.IsPlaying then
-        track:Stop(0)
-    end
+    if track.IsPlaying then track:Stop(0) end
 
     if humanoid and humanoid.Parent then
-        humanoid.HipHeight = 2.0008
+        humanoid.HipHeight = originalHipHeight
+        humanoid.WalkSpeed = originalWalkSpeed
+        humanoid.AutoRotate = originalAutoRotate
     end
 
+    leg = character:FindFirstChild("LeftLowerLeg")
     if leg and leg.Parent then
-        leg.Velocity = Vector3.zero
+        leg.AssemblyLinearVelocity = Vector3.zero
+        leg.AssemblyAngularVelocity = Vector3.zero
     end
 
-    if self.currentTrack == track then
-        self.currentTrack = nil
-    end
-
+    if self.currentTrack == track then self.currentTrack = nil end
     self.actionRunning = false
-
-    self:StopInvisibleShiftLock(humanoid)
-
-    pcall(function()
-        track:Destroy()
-    end)
+    self:StopWalkFling()
+    pcall(function() track:Destroy() end)
 end
 
 function utility:MouseDetection()
     local mouse = self.LocalPlayer:GetMouse()
+    if self.conns.mouse then self.conns.mouse:Disconnect() end
 
-    if self.conns.mouse then
-        self.conns.mouse:Disconnect()
-    end
+    self.conns.mouse = mouse.Button1Down:Connect(function()
+        if self.selectedMethod ~= "Click" then return end
+        if self.keyListening or self.recordingKey then return end
 
-    self.conns.mouse =
-        mouse.Button1Down:Connect(function()
-            if self.selectedMethod ~= "Click" then
-                return
-            end
+        local position = self.UserInputService:GetMouseLocation()
+        local objects = self.LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(position.X, position.Y)
+        for _, object in ipairs(objects) do
+            if object:IsDescendantOf(self.MainUI) then return end
+        end
 
-            if self.keyListening
-                or self.recordingKey then
-                return
-            end
-
-            local position =
-                self.UserInputService:GetMouseLocation()
-
-            local objects =
-                self.LocalPlayer.PlayerGui:GetGuiObjectsAtPosition(
-                    position.X,
-                    position.Y
-                )
-
-            for _, object in ipairs(objects) do
-                if object:IsDescendantOf(self.MainUI) then
-                    return
-                end
-            end
-
-            self:PerformDropkick()
-        end)
+        self:PerformDropkick()
+    end)
 end
 
 function utility:StartKeyDetection()
-    if self.conns.key then
-        self.conns.key:Disconnect()
-    end
+    if self.conns.key then self.conns.key:Disconnect() end
 
-    self.conns.key =
-        self.UserInputService.InputBegan:Connect(
-            function(input, gameProcessed)
-                if gameProcessed then
-                    return
-                end
-
-                if self.keyListening
-                    or self.recordingKey then
-                    return
-                end
-
-                if self.selectedMethod ~= "Key" then
-                    return
-                end
-
-                if input.UserInputType ==
-                    Enum.UserInputType.Keyboard
-                    and input.KeyCode ==
-                    self.selectedKey then
-
-                    self:PerformDropkick()
-                end
-            end
-        )
+    self.conns.key = self.UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        if self.keyListening or self.recordingKey then return end
+        if self.selectedMethod ~= "Key" then return end
+        if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == self.selectedKey then
+            self:PerformDropkick()
+        end
+    end)
 end
 
 function utility:CreateButton(parent, text)
     local button = Instance.new("TextButton")
-
     button.Size = UDim2.new(1, 0, 0, 36)
     button.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     button.BorderSizePixel = 0
@@ -640,27 +519,17 @@ function utility:UpdateUI()
     local keyColor = Color3.fromRGB(20, 20, 20)
     local uiColor = Color3.fromRGB(20, 20, 20)
 
-    if self.selectedMethod == "Click" then
-        clickColor = Color3.fromRGB(45, 45, 45)
-    elseif self.selectedMethod == "Key" then
-        keyColor = Color3.fromRGB(45, 45, 45)
-    elseif self.selectedMethod == "UI Button" then
-        uiColor = Color3.fromRGB(45, 45, 45)
-    end
+    if self.selectedMethod == "Click" then clickColor = Color3.fromRGB(45, 45, 45)
+    elseif self.selectedMethod == "Key" then keyColor = Color3.fromRGB(45, 45, 45)
+    elseif self.selectedMethod == "UI Button" then uiColor = Color3.fromRGB(45, 45, 45) end
 
     self.ClickButton.BackgroundColor3 = clickColor
     self.KeyButton.BackgroundColor3 = keyColor
     self.UIButton.BackgroundColor3 = uiColor
+    self.KeyConfig.Visible = (self.selectedMethod == "Key")
+    self.ActionButton.Visible = (self.selectedMethod == "UI Button")
 
-    self.KeyConfig.Visible =
-        self.selectedMethod == "Key"
-
-    self.ActionButton.Visible =
-        self.selectedMethod == "UI Button"
-
-    if self.selectedMethod == "Key"
-        and not self.keyListening then
-
+    if self.selectedMethod == "Key" and not self.keyListening then
         self.KeyBox.Text = self.selectedKey.Name
     end
 
@@ -668,42 +537,17 @@ function utility:UpdateUI()
 end
 
 function utility:ResizePanel()
-    if not self.menuOpen then
-        return
-    end
+    if not self.menuOpen then return end
 
-    local height =
-        8
-        + 36
-        + 6
-        + 36
-        + 6
-        + 36
-        + 10
-        + 1
-        + 5
-        + 16
-        + 8
+    local height = 8 + 36 + 6 + 36 + 6 + 36 + 10 + 1 + 5 + 16 + 8
+    if self.selectedMethod == "Key" then height += 6 + 36 end
 
-    if self.selectedMethod == "Key" then
-        height += 6 + 36
-    end
-
-    self.Panel:TweenSize(
-        UDim2.fromOffset(210, height),
-        Enum.EasingDirection.Out,
-        Enum.EasingStyle.Quad,
-        0.15,
-        true
-    )
+    self.Panel:TweenSize(UDim2.fromOffset(210, height), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.15, true)
 end
 
 function utility:CreateUI()
-    local playerGui =
-        self.LocalPlayer:WaitForChild("PlayerGui")
-
+    local playerGui = self.LocalPlayer:WaitForChild("PlayerGui")
     local gui = Instance.new("ScreenGui")
-
     gui.Name = "DropkickController"
     gui.ResetOnSpawn = false
     gui.IgnoreGuiInset = true
@@ -713,7 +557,6 @@ function utility:CreateUI()
     self.MainUI = gui
 
     local main = Instance.new("Frame")
-
     main.Name = "Main"
     main.Size = UDim2.fromOffset(52, 52)
     main.Position = UDim2.new(0, 30, 0.5, -26)
@@ -723,7 +566,6 @@ function utility:CreateUI()
     self.Main = main
 
     local gear = Instance.new("TextButton")
-
     gear.Name = "Gear"
     gear.Size = UDim2.fromOffset(52, 52)
     gear.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
@@ -746,7 +588,6 @@ function utility:CreateUI()
     self.GearButton = gear
 
     local panel = Instance.new("Frame")
-
     panel.Name = "Panel"
     panel.Size = UDim2.fromOffset(210, 0)
     panel.Position = UDim2.new(0, 0, 1, 7)
@@ -787,7 +628,6 @@ function utility:CreateUI()
     self.UIButton = uiButton
 
     local keyConfig = Instance.new("Frame")
-
     keyConfig.Name = "KeyConfig"
     keyConfig.Size = UDim2.new(1, 0, 0, 36)
     keyConfig.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
@@ -800,7 +640,6 @@ function utility:CreateUI()
     keyCorner.Parent = keyConfig
 
     local keyLabel = Instance.new("TextLabel")
-
     keyLabel.Size = UDim2.new(0.45, 0, 1, 0)
     keyLabel.BackgroundTransparency = 1
     keyLabel.Text = "Key"
@@ -810,7 +649,6 @@ function utility:CreateUI()
     keyLabel.Parent = keyConfig
 
     local keyBox = Instance.new("TextButton")
-
     keyBox.Size = UDim2.new(0.45, 0, 0, 27)
     keyBox.Position = UDim2.new(0.52, 0, 0.5, -13)
     keyBox.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
@@ -830,7 +668,6 @@ function utility:CreateUI()
     self.KeyBox = keyBox
 
     local separator = Instance.new("Frame")
-
     separator.Name = "Separator"
     separator.Size = UDim2.new(1, 0, 0, 1)
     separator.BackgroundColor3 = Color3.fromRGB(55, 55, 55)
@@ -839,7 +676,6 @@ function utility:CreateUI()
     separator.Parent = panel
 
     local credit = Instance.new("TextLabel")
-
     credit.Name = "Credit"
     credit.Size = UDim2.new(1, 0, 0, 16)
     credit.BackgroundTransparency = 1
@@ -851,7 +687,6 @@ function utility:CreateUI()
     credit.Parent = panel
 
     local action = Instance.new("TextButton")
-
     action.Name = "ActionButton"
     action.AnchorPoint = Vector2.new(0.5, 1)
     action.Size = UDim2.fromOffset(120, 42)
@@ -876,361 +711,163 @@ function utility:CreateUI()
 
     self.ActionButton = action
 
+    -- Gear drag logic
     local gearDragging = false
     local gearDragStart
     local gearStartPosition
     local gearDragDistance = 0
 
     gear.InputBegan:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
         gearDragging = true
         gearDragStart = input.Position
         gearStartPosition = main.Position
         gearDragDistance = 0
     end)
 
-    self.conns.gearMove =
-        self.UserInputService.InputChanged:Connect(function(input)
-            if not gearDragging then
-                return
-            end
-
-            if input.UserInputType ~= Enum.UserInputType.MouseMovement
-                and input.UserInputType ~= Enum.UserInputType.Touch then
-                return
-            end
-
-            local delta =
-                input.Position - gearDragStart
-
-            gearDragDistance = math.max(
-                gearDragDistance,
-                math.abs(delta.X) + math.abs(delta.Y)
-            )
-
-            main.Position = UDim2.new(
-                gearStartPosition.X.Scale,
-                gearStartPosition.X.Offset + delta.X,
-                gearStartPosition.Y.Scale,
-                gearStartPosition.Y.Offset + delta.Y
-            )
-        end)
+    self.conns.gearMove = self.UserInputService.InputChanged:Connect(function(input)
+        if not gearDragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local delta = input.Position - gearDragStart
+        gearDragDistance = math.max(gearDragDistance, math.abs(delta.X) + math.abs(delta.Y))
+        main.Position = UDim2.new(gearStartPosition.X.Scale, gearStartPosition.X.Offset + delta.X, gearStartPosition.Y.Scale, gearStartPosition.Y.Offset + delta.Y)
+    end)
 
     self.UserInputService.InputEnded:Connect(function(input)
-        if not gearDragging then
-            return
-        end
-
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
+        if not gearDragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
         gearDragging = false
-
-        if gearDragDistance >= 8 then
-            return
-        end
-
+        if gearDragDistance >= 8 then return end
         self.menuOpen = not self.menuOpen
-
         if self.menuOpen then
             panel.Visible = true
             panel.Size = UDim2.fromOffset(210, 0)
             self:ResizePanel()
         else
-            panel:TweenSize(
-                UDim2.fromOffset(210, 0),
-                Enum.EasingDirection.In,
-                Enum.EasingStyle.Quad,
-                0.15,
-                true
-            )
-
+            panel:TweenSize(UDim2.fromOffset(210, 0), Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.15, true)
             task.delay(0.16, function()
-                if not self.menuOpen then
-                    panel.Visible = false
-                end
+                if not self.menuOpen then panel.Visible = false end
             end)
         end
     end)
 
     click.MouseButton1Click:Connect(function()
-        if self.selectedMethod == "Click" then
-            self.selectedMethod = "None"
-        else
-            self.selectedMethod = "Click"
-        end
-
+        if self.selectedMethod == "Click" then self.selectedMethod = "None"
+        else self.selectedMethod = "Click" end
         self:UpdateUI()
     end)
 
     key.MouseButton1Click:Connect(function()
         if self.selectedMethod == "Key" then
             self.selectedMethod = "None"
-
             self.keyListening = false
             self.recordingKey = false
-
-            if self.conns.keyRecord then
-                self.conns.keyRecord:Disconnect()
-                self.conns.keyRecord = nil
-            end
-        else
-            self.selectedMethod = "Key"
-        end
-
+            if self.conns.keyRecord then self.conns.keyRecord:Disconnect() self.conns.keyRecord = nil end
+        else self.selectedMethod = "Key" end
         self:UpdateUI()
     end)
 
     uiButton.MouseButton1Click:Connect(function()
-        if self.selectedMethod == "UI Button" then
-            self.selectedMethod = "None"
-        else
-            self.selectedMethod = "UI Button"
-        end
-
+        if self.selectedMethod == "UI Button" then self.selectedMethod = "None"
+        else self.selectedMethod = "UI Button" end
         self:UpdateUI()
     end)
 
     keyBox.MouseButton1Click:Connect(function()
-        if self.selectedMethod ~= "Key" then
-            return
-        end
-
-        if self.keyListening or self.recordingKey then
-            return
-        end
-
+        if self.selectedMethod ~= "Key" then return end
+        if self.keyListening or self.recordingKey then return end
         self.keyListening = true
         self.recordingKey = true
-
         keyBox.Text = "Press key..."
-
-        if self.conns.keyRecord then
-            self.conns.keyRecord:Disconnect()
-            self.conns.keyRecord = nil
-        end
-
-        self.conns.keyRecord =
-            self.UserInputService.InputBegan:Connect(function(input)
-                if not self.keyListening then
-                    return
-                end
-
-                if input.UserInputType ~= Enum.UserInputType.Keyboard then
-                    return
-                end
-
-                if input.KeyCode == Enum.KeyCode.Unknown then
-                    return
-                end
-
-                self.selectedKey = input.KeyCode
-                self.keyListening = false
-
-                keyBox.Text = self.selectedKey.Name
-
-                if self.conns.keyRecord then
-                    self.conns.keyRecord:Disconnect()
-                    self.conns.keyRecord = nil
-                end
-
-                task.delay(0.1, function()
-                    self.recordingKey = false
-                end)
-            end)
+        if self.conns.keyRecord then self.conns.keyRecord:Disconnect() self.conns.keyRecord = nil end
+        self.conns.keyRecord = self.UserInputService.InputBegan:Connect(function(input)
+            if not self.keyListening then return end
+            if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+            if input.KeyCode == Enum.KeyCode.Unknown then return end
+            self.selectedKey = input.KeyCode
+            self.keyListening = false
+            keyBox.Text = self.selectedKey.Name
+            if self.conns.keyRecord then self.conns.keyRecord:Disconnect() self.conns.keyRecord = nil end
+            task.delay(0.1, function() self.recordingKey = false end)
+        end)
     end)
 
+    -- Action button drag + click
     local dragging = false
     local dragStart
     local startPosition
     local dragDistance = 0
 
     action.InputBegan:Connect(function(input)
-        if input.UserInputType ~= Enum.UserInputType.MouseButton1
-            and input.UserInputType ~= Enum.UserInputType.Touch then
-            return
-        end
-
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
         dragging = true
         dragStart = input.Position
         startPosition = action.Position
         dragDistance = 0
-
         local changed
-
         changed = input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 dragging = false
-
-                if changed then
-                    changed:Disconnect()
-                end
-
-                if dragDistance < 8
-                    and self.selectedMethod == "UI Button"
-                    and not self.keyListening
-                    and not self.recordingKey then
-
+                if changed then changed:Disconnect() end
+                if dragDistance < 8 and self.selectedMethod == "UI Button" and not self.keyListening and not self.recordingKey then
                     self:PerformDropkick()
                 end
             end
         end)
     end)
 
-    self.conns.actionMove =
-        self.UserInputService.InputChanged:Connect(function(input)
-            if not dragging then
-                return
-            end
-
-            if input.UserInputType ~= Enum.UserInputType.MouseMovement
-                and input.UserInputType ~= Enum.UserInputType.Touch then
-                return
-            end
-
-            local delta =
-                input.Position - dragStart
-
-            dragDistance = math.max(
-                dragDistance,
-                math.abs(delta.X) + math.abs(delta.Y)
-            )
-
-            action.Position = UDim2.new(
-                startPosition.X.Scale,
-                startPosition.X.Offset + delta.X,
-                startPosition.Y.Scale,
-                startPosition.Y.Offset + delta.Y
-            )
-        end)
+    self.conns.actionMove = self.UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local delta = input.Position - dragStart
+        dragDistance = math.max(dragDistance, math.abs(delta.X) + math.abs(delta.Y))
+        action.Position = UDim2.new(startPosition.X.Scale, startPosition.X.Offset + delta.X, startPosition.Y.Scale, startPosition.Y.Offset + delta.Y)
+    end)
 
     self:UpdateUI()
 end
 
-function utility:StartAntiFling()
-    if self.antiFlingConnection then
-        self.antiFlingConnection:Disconnect()
-        self.antiFlingConnection = nil
-    end
-
-    self.antiFlingConnection =
-        self.RunService.Heartbeat:Connect(function()
-            local myCharacter =
-                self.LocalPlayer.Character
-
-            if not myCharacter then
-                return
-            end
-
-            for _, player in pairs(
-                self.Players:GetPlayers()
-            ) do
-                if player ~= self.LocalPlayer
-                    and player.Character then
-
-                    for _, part in pairs(
-                        player.Character:GetDescendants()
-                    ) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = false
-                            part.AssemblyLinearVelocity =
-                                Vector3.zero
-                            part.AssemblyAngularVelocity =
-                                Vector3.zero
-                        end
-                    end
-                end
-            end
-        end)
-end
-
 function utility:BeginDropkickHook(char)
     task.wait(1)
-
-    if not char then
-        return warn("failed to get valid character")
-    end
-
-    local hum =
-        char:WaitForChild("Humanoid", 1)
-
-    if not hum then
-        return warn("Failed to get humanoid")
-    end
-
-    if not self.CheckValidRigType(hum) then
-        return self.LocalPlayer:Kick(
-            "Change avatar to R15"
-        )
-    end
-
-    local animator =
-        hum:WaitForChild("Animator", 1)
-
-    if not animator then
-        return warn("failed to get animator")
-    end
-
+    if not char then return warn("failed to get valid character") end
+    local hum = char:WaitForChild("Humanoid", 1)
+    if not hum then return warn("Failed to get humanoid") end
+    if not self.CheckValidRigType(hum) then return self.LocalPlayer:Kick("Change avatar to R15") end
+    local animator = hum:WaitForChild("Animator", 1)
+    if not animator then return warn("failed to get animator") end
     return "success"
 end
 
 function utility:init()
     local s, r = pcall(function()
-        return self.AnimationClipProvider:GetAnimationClipAsync(
-            self.dropkick.AnimationId
-        )
+        return self.AnimationClipProvider:GetAnimationClipAsync(self.dropkick.AnimationId)
     end)
 
-    self.LocalPlayer =
-        self.Players.LocalPlayer
-
-    if not self.LocalPlayer then
-        return warn("failed to get localplayer")
-    end
+    self.LocalPlayer = self.Players.LocalPlayer
+    if not self.LocalPlayer then return warn("failed to get localplayer") end
 
     self:ShowStartup()
 
     if not r or r.Name == nil then
-        return self.LocalPlayer:Kick(
-            "failed to get animation"
-        )
+        return self.LocalPlayer:Kick("failed to get animation")
     end
 
-    self.character =
-        self.LocalPlayer.Character
+    self.character = self.LocalPlayer.Character
+    if not self.character then return warn("failed to get character") end
 
-    if not self.character then
-        return warn("failed to get character")
-    end
+    self:BeginDropkickHook(self.character)
 
-    self:BeginDropkickHook(
-        self.character
-    )
-
-    self.charadded =
-        self.LocalPlayer.CharacterAdded:Connect(
-            function(character)
-                self:BeginDropkickHook(character)
-            end
-        )
+    self.charadded = self.LocalPlayer.CharacterAdded:Connect(function(character)
+        self:BeginDropkickHook(character)
+    end)
 
     self:CreateUI()
     self:MouseDetection()
     self:StartKeyDetection()
-    self:StartAntiFling()
+    self:StartAntiFling() -- original all-player no-clip loop
 
-    if not self.charadded
-        or not self.antiFlingConnection then
-
-        return warn(
-            "failed to initialize charadded/antifling"
-        )
+    if not self.charadded or not self.antiFlingConnection then
+        return warn("failed to initialize charadded/antifling")
     end
 
     return warn("success")
