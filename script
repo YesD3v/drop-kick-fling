@@ -12,6 +12,19 @@ local utility = {
 
 utility.dropkick.AnimationId = "rbxassetid://133566007754001"
 
+task.spawn(function()
+    local instancesToLoad = {}
+    table.insert(instancesToLoad, utility.dropkick)
+    
+    local gearPreload = Instance.new("ImageLabel")
+    gearPreload.Image = "rbxthumb://type=Asset&id=7059346386&w=420&h=420"
+    table.insert(instancesToLoad, gearPreload)
+    
+    pcall(function()
+        game:GetService("ContentProvider"):PreloadAsync(instancesToLoad)
+    end)
+end)
+
 utility.selectedMethod = "Click"
 utility.selectedKey = Enum.KeyCode.F
 utility.flingForce = 5000
@@ -1213,10 +1226,8 @@ function utility:PerformDropkick()
         os.clock()
 
     while track.IsPlaying
-        and (
-            os.clock()
-            - startTime
-        ) < playTime do
+        and os.clock()
+        - startTime < playTime do
 
         if self.actionId ~=
             thisActionId then
@@ -1689,18 +1700,9 @@ function utility:UpdateUI()
     self.UIButton.BackgroundColor3 =
         uiColor
 
-    self.KeyConfig.Visible =
-        (
-            self.selectedMethod ==
-            "Key"
-        )
+    self.KeyConfig.Visible = self.selectedMethod == "Key"
 
-    self.ActionButton.Visible =
-        self.uiReady
-        and (
-            self.selectedMethod ==
-            "UI Button"
-        )
+    self.ActionButton.Visible = self.uiReady and self.selectedMethod == "UI Button"
 
     if self.selectedMethod ==
         "Key"
@@ -1718,29 +1720,15 @@ function utility:ResizePanel()
         return
     end
 
-    local height =
-        8
-        + 36
-        + 6
-        + 36
-        + 6
-        + 36
-        + 10
-        + 1
-        + 5
-        + 16
-        + 8
+    local height = 165
 
-    if self.selectedMethod ==
-        "Key" then
-
-        height +=
-            6 + 36
+    if self.selectedMethod == "Key" then
+        height += 42
     end
 
     self.Panel:TweenSize(
         UDim2.fromOffset(
-            260,
+            180,
             height
         ),
         Enum.EasingDirection.Out,
@@ -1939,7 +1927,7 @@ function utility:CreateUI()
 
     panel.Size =
         UDim2.fromOffset(
-            260,
+            180,
             0
         )
 
@@ -2520,7 +2508,7 @@ function utility:CreateUI()
 
                 panel.Size =
                     UDim2.fromOffset(
-                        260,
+                        180,
                         0
                     )
 
@@ -2528,7 +2516,7 @@ function utility:CreateUI()
             else
                 panel:TweenSize(
                     UDim2.fromOffset(
-                        260,
+                        180,
                         0
                     ),
                     Enum.EasingDirection.In,
@@ -2833,7 +2821,7 @@ function utility:CreateUI()
 
                         panel.Size =
                             UDim2.fromOffset(
-                                260,
+                                180,
                                 0
                             )
 
@@ -2841,7 +2829,7 @@ function utility:CreateUI()
                     else
                         panel:TweenSize(
                             UDim2.fromOffset(
-                                260,
+                                180,
                                 0
                             ),
                             Enum.EasingDirection.In,
